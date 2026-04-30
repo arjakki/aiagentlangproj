@@ -1,42 +1,91 @@
-# ED AI Agent — Mercy Regional Medical Center
+# ED AI Agent — Adviava Regional Medical Center
 
-A full-stack AI-powered Emergency Department clinical decision-support system. A LangChain ReAct agent backed by Claude Sonnet 4.6 uses the **Model Context Protocol (MCP)** to query a live SQLite patient database. The web interface provides a real-time census dashboard, an AI chat assistant, and a patient intake form.
+A full-stack AI-powered Emergency Department clinical decision-support system. A LangChain ReAct agent backed by Claude Sonnet 4.6 uses the **Model Context Protocol (MCP)** to query a live SQLite patient database. The web interface provides a real-time census dashboard, an AI chat assistant, a patient intake form, and a business case page.
+
+**Live deployment:** `http://18.224.64.93:8000`
 
 ---
 
 ## Table of Contents
 
-1. [Project Architecture](#1-project-architecture)
-2. [Application Components](#2-application-components)
-3. [Technology Stack](#3-technology-stack)
-4. [Prerequisites](#4-prerequisites)
-5. [Installation](#5-installation)
-6. [Configuration](#6-configuration)
-7. [Running the Application](#7-running-the-application)
-8. [Using the Application](#8-using-the-application)
-9. [API Reference](#9-api-reference)
-10. [MCP Tools Reference](#10-mcp-tools-reference)
-11. [Database Schema](#11-database-schema)
-12. [Generating the Architecture PDF](#12-generating-the-architecture-pdf)
+1. [Live Deployment](#1-live-deployment)
+2. [Project Architecture](#2-project-architecture)
+3. [Application Components](#3-application-components)
+4. [Technology Stack](#4-technology-stack)
+5. [Prerequisites](#5-prerequisites)
+6. [Installation](#6-installation)
+7. [Configuration](#7-configuration)
+8. [Running the Application](#8-running-the-application)
+9. [Using the Application](#9-using-the-application)
+10. [API Reference](#10-api-reference)
+11. [MCP Tools Reference](#11-mcp-tools-reference)
+12. [Database Schema](#12-database-schema)
+13. [Generating PDFs](#13-generating-pdfs)
+14. [Project Structure](#14-project-structure)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
-## 1. Project Architecture
+## 1. Live Deployment
+
+The application is deployed on AWS EC2 and publicly accessible:
+
+| Page | URL |
+|------|-----|
+| Census Dashboard | http://18.224.64.93:8000 |
+| AI Chat Assistant | http://18.224.64.93:8000/chat |
+| Patient Intake Form | http://18.224.64.93:8000/intake |
+| Business Case | http://18.224.64.93:8000/business-case |
+| API Docs (Swagger) | http://18.224.64.93:8000/docs |
+
+### EC2 Deployment Details
+
+| Property | Value |
+|----------|-------|
+| Instance | AWS EC2 (`i-05cef553b3f5ffab7`) |
+| Region | us-east-2 (Ohio) |
+| OS | Amazon Linux 2023 |
+| Python | 3.11.14 (venv) |
+| Process manager | systemd (`edaiagent.service`) |
+| Port | 8000 (TCP, open 0.0.0.0/0) |
+| Auto-start on reboot | Yes (`systemctl enable edaiagent`) |
+
+**Managing the service on EC2:**
+```bash
+ssh -i webapp.pem ec2-user@18.224.64.93
+
+sudo systemctl status edaiagent     # check status
+sudo systemctl restart edaiagent    # restart
+sudo systemctl stop edaiagent       # stop
+sudo journalctl -u edaiagent -f     # live logs
+```
+
+**Updating the deployment after a code push:**
+```bash
+ssh -i webapp.pem ec2-user@18.224.64.93
+cd ~/pntdigappproj && git pull origin main
+sudo systemctl restart edaiagent
+```
+
+---
+
+## 2. Project Architecture
 
 ```
 Browser (HTML/JS)
        │
        ▼
-┌─────────────────────────────────────────┐
-│          FastAPI  (app/main.py)         │
-│   GET /          → Dashboard            │
-│   GET /chat      → AI Chat              │
-│   GET /intake    → Patient Intake Form  │
-│   POST /api/chat → AI Agent endpoint    │
-│   POST /api/intake → DB write endpoint  │
-│   GET /api/stats → Live census stats    │
-│   GET /api/patients → Patient list      │
-└────────────┬────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│           FastAPI  (app/main.py)             │
+│   GET /                → Dashboard           │
+│   GET /chat            → AI Chat             │
+│   GET /intake          → Patient Intake Form │
+│   GET /business-case   → Business Case       │
+│   POST /api/chat       → AI Agent endpoint   │
+│   POST /api/intake     → DB write endpoint   │
+│   GET /api/stats       → Live census stats   │
+│   GET /api/patients    → Patient list        │
+└────────────┬─────────────────────────────────┘
              │  per-request agent session
              ▼
 ┌────────────────────────────────────────┐
@@ -82,9 +131,9 @@ Browser (HTML/JS)
 
 ---
 
-## 2. Application Components
+## 3. Application Components
 
-### 2.1 FastAPI Backend — `app/`
+### 3.1 FastAPI Backend — `app/`
 
 | File | Purpose |
 |------|---------|
@@ -108,7 +157,7 @@ async def agent_session() -> AsyncIterator:
 
 The MCP subprocess is started per request and cleanly terminated when the context exits. This avoids state leakage between requests.
 
-### 2.2 MCP Server — `mcp_server/server.py`
+### 3.2 MCP Server — `mcp_server/server.py`
 
 A standalone Python process that speaks the **Model Context Protocol** over stdio. FastMCP registers each function decorated with `@mcp.tool()` as a callable tool. The agent can discover and call these at runtime.
 
@@ -126,28 +175,28 @@ A standalone Python process that speaks the **Model Context Protocol** over stdi
 | `search_patients` | Fuzzy search by first name, last name, or MRN fragment |
 | `insert_patient_intake` | Write a new patient + triage record to the database |
 
-### 2.3 Frontend — `frontend/`
+### 3.3 Frontend — `frontend/`
 
-Three single-page HTML files, no build step required — served as static files by FastAPI.
+Four single-page HTML files, no build step required — served as static files by FastAPI. All pages share the same design system (Inter Tight / Fraunces / JetBrains Mono fonts, CSS custom properties) and navigation bar.
 
-#### `frontend/index.html` — Dashboard
+#### `frontend/index.html` — Dashboard (`/`)
 
 - Fetches `/api/stats` and `/api/patients` on load
 - Displays live census counts: total patients, today's census, critical patients (ESI 1–2)
-- Renders an ESI distribution bar chart using inline SVG/CSS
-- Patient table with color-coded ESI badges and abnormal vital highlighting
+- Renders an ESI distribution bar chart using inline CSS
+- Patient table with colour-coded ESI badges and abnormal vital highlighting
 - Auto-refreshes every 60 seconds
 
-#### `frontend/chat.html` — AI Chat
+#### `frontend/chat.html` — AI Chat (`/chat`)
 
 - Full-page chat interface with message history
 - Sidebar listing 8 quick-query suggestions and all 9 MCP tool names
-- Sends POST requests to `/api/chat` and streams the response text
+- Sends POST requests to `/api/chat`
 - Displays "thinking..." indicator while agent is reasoning
 - Shows tool-call chips (e.g., `get_critical_patients`, `execute_query`) for each response
 - Supports markdown-style formatting in responses
 
-#### `frontend/intake.html` — Patient Intake Form (ED-001)
+#### `frontend/intake.html` — Patient Intake Form (`/intake`, ED-001)
 
 - Complete Emergency Department intake form with all clinical fields:
   - Patient demographics (name, DOB, MRN, sex, language, address, phone)
@@ -159,7 +208,20 @@ Three single-page HTML files, no build step required — served as static files 
 - Overrides native form submit — POSTs JSON to `/api/intake`
 - Shows toast notification on success, redirects to dashboard after 2 seconds
 
-### 2.4 Database — `data/ed_database.db`
+#### `frontend/business_case.html` — Business Case (`/business-case`)
+
+- Full Adviava-branded business case and value analysis page
+- **Hero section** — navy/gold banner with PDF download button
+- **KPI strip** — 4 headline stats (145M ED visits, 35% shift time lost, 62% burnout, $361K savings)
+- **6 Problem cards** — ED crisis, clinician search time, preventable harm, burnout, fragmented data, financial impact
+- **Capability query table** — 6 natural-language query types with before/after time comparison
+- **Patient safety value list** — allergy flagging, vital thresholds, ESI critical highlighting, code status
+- **Financial impact table** — conservative ROI estimates with highlighted $361K/year figure
+- **Why Today / Why Future cards** — AI inflection point, MCP, regulatory pressure, physician shortage, multimodal AI, FHIR mandates, autonomous agents
+- **3-phase roadmap** — colour-coded columns for 0–6 months, 6–18 months, 18–36 months
+- **3-sentence summary callout** — Problem / Solution / Imperative on dark navy background
+
+### 3.4 Database — `data/ed_database.db`
 
 SQLite database (MySQL-compatible SQL syntax) created and seeded automatically on first startup.
 
@@ -173,7 +235,7 @@ SQLite database (MySQL-compatible SQL syntax) created and seeded automatically o
 - 19 medical history entries (PMH and PSH)
 - 10 emergency contacts
 
-### 2.5 Architecture PDF — `generate_pdf.py`
+### 3.5 Technical Architecture PDF — `generate_pdf.py`
 
 A standalone ReportLab script that generates `ED_AI_Agent_Architecture.pdf` — a 13+ page technical document with:
 
@@ -187,13 +249,25 @@ A standalone ReportLab script that generates `ED_AI_Agent_Architecture.pdf` — 
 - Deployment architecture diagram
 - Complete API reference, MCP tools, DB schema, and technology stack tables
 
+### 3.6 Business Case PDF — `generate_business_case_pdf.py`
+
+A standalone ReportLab script that generates `Adviava_ED_AI_Agent_Business_Case.pdf` — a professional multi-page business document with Adviava branding, including:
+
+- Navy/gold cover page with 4 headline statistics
+- Executive summary with metric strip
+- The Business Problem (5 subsections with statistics)
+- Solution value — capability table and financial impact table
+- Why critical today and in the future
+- 3-phase strategic roadmap with colour-coded phase pills
+- 3-sentence summary in styled cards
+
 ---
 
-## 3. Technology Stack
+## 4. Technology Stack
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Language | Python | 3.10+ |
+| Language | Python | 3.11+ |
 | Web framework | FastAPI | ≥ 0.115 |
 | ASGI server | Uvicorn | ≥ 0.32 |
 | AI framework | LangChain + LangGraph | ≥ 0.3 / ≥ 0.2 |
@@ -207,10 +281,11 @@ A standalone ReportLab script that generates `ED_AI_Agent_Architecture.pdf` — 
 | Environment | python-dotenv | ≥ 1.0 |
 | PDF generation | ReportLab | ≥ 4.0 |
 | Frontend | HTML5 / CSS3 / Vanilla JS | — |
+| Deployment | AWS EC2, Amazon Linux 2023, systemd | — |
 
 ---
 
-## 4. Prerequisites
+## 5. Prerequisites
 
 Before installing, ensure you have the following:
 
@@ -234,7 +309,7 @@ Before installing, ensure you have the following:
 
 ---
 
-## 5. Installation
+## 6. Installation
 
 Follow these steps exactly, in order.
 
@@ -315,11 +390,9 @@ PORT=8000
 
 > **Never commit `.env` to version control.** It is listed in `.gitignore` by default.
 
-### Step 5 — Verify the database path
+### Step 5 — Verify the database initialises
 
-The database is auto-created on first startup at `data/ed_database.db`. No manual database setup is required. If the `data/` directory doesn't exist, Python will create it.
-
-To confirm the database initialises correctly, you can do a dry run:
+The database is auto-created on first startup at `data/ed_database.db`. No manual database setup is required. To confirm it works correctly, run a dry-run:
 
 ```bash
 python -c "from app.database import init_database; init_database(); print('OK')"
@@ -333,7 +406,7 @@ OK
 
 ### Step 6 — (Optional) Install PDF generation dependencies
 
-If you want to re-generate the architecture PDF, install ReportLab:
+To regenerate either architecture PDF:
 
 ```bash
 pip install reportlab
@@ -341,7 +414,7 @@ pip install reportlab
 
 ---
 
-## 6. Configuration
+## 7. Configuration
 
 All configuration is done via the `.env` file:
 
@@ -358,7 +431,7 @@ PORT=9000
 
 ---
 
-## 7. Running the Application
+## 8. Running the Application
 
 ### Quick start (Windows)
 
@@ -394,6 +467,7 @@ Open a browser and navigate to:
 | `http://localhost:8000` | Census Dashboard |
 | `http://localhost:8000/chat` | AI Chat Assistant |
 | `http://localhost:8000/intake` | Patient Intake Form |
+| `http://localhost:8000/business-case` | Business Case & Value Analysis |
 | `http://localhost:8000/docs` | Interactive API docs (Swagger UI) |
 | `http://localhost:8000/redoc` | API docs (ReDoc) |
 
@@ -410,7 +484,7 @@ Press `Ctrl+C` in the terminal where the server is running.
 
 ---
 
-## 8. Using the Application
+## 9. Using the Application
 
 ### Dashboard (`/`)
 
@@ -422,7 +496,7 @@ The dashboard loads automatically on startup. It shows:
 - **ESI Distribution** — bar chart of patients by triage level
 - **Patient Table** — all of today's patients with vitals, sorted by ESI level
 
-ESI color coding: ESI 1 (red), ESI 2 (orange), ESI 3 (yellow), ESI 4 (green), ESI 5 (blue).
+ESI colour coding: ESI 1 (red), ESI 2 (orange), ESI 3 (yellow), ESI 4 (green), ESI 5 (blue).
 
 ### AI Chat (`/chat`)
 
@@ -435,7 +509,7 @@ Type any clinical question in natural language. Example queries:
 - `What is today's ESI distribution?`
 - `Search for patients named Johnson`
 
-The agent will select the appropriate MCP tools, query the database, and return a formatted clinical summary. Tool calls used to generate each response are displayed as chips below the message.
+The agent selects the appropriate MCP tools, queries the database, and returns a formatted clinical summary. Tool calls used to generate each response are displayed as chips below the message.
 
 ### Patient Intake Form (`/intake`)
 
@@ -447,9 +521,21 @@ Fill in the form fields to register a new patient:
 4. Click **Submit Intake** — a success toast appears and the page redirects to the dashboard
 5. The new patient is immediately queryable via the AI chat
 
+### Business Case (`/business-case`)
+
+A full-page business case and value analysis for the ED AI Agent, including:
+
+- KPI strip with headline statistics
+- Problem cards covering the ED crisis, clinical information gaps, staff burnout, and fragmented data
+- AI agent capability matrix with time-savings comparisons
+- Financial impact table (conservative ROI estimates)
+- Why this technology is critical today and in the future
+- 3-phase strategic roadmap
+- PDF download button for `Adviava_ED_AI_Agent_Business_Case.pdf`
+
 ---
 
-## 9. API Reference
+## 10. API Reference
 
 ### `POST /api/chat`
 
@@ -539,7 +625,7 @@ Returns all patients for today's census date with their first vital sign reading
 
 ---
 
-## 10. MCP Tools Reference
+## 11. MCP Tools Reference
 
 The MCP server (`mcp_server/server.py`) exposes these tools to the AI agent via the Model Context Protocol. The agent selects and calls these autonomously based on the user's question.
 
@@ -559,7 +645,7 @@ The MCP server runs as a **child process** of the FastAPI server, communicating 
 
 ---
 
-## 11. Database Schema
+## 12. Database Schema
 
 Seven tables, all created automatically on first startup:
 
@@ -675,66 +761,65 @@ Abnormal thresholds used by the agent: HR > 100 or < 60, SBP < 90 or > 180, SpO2
 
 ---
 
-## 12. Generating the Architecture PDF
+## 13. Generating PDFs
 
-The repository includes a pre-generated `ED_AI_Agent_Architecture.pdf`. To regenerate it after making changes:
+### Technical Architecture PDF
 
 ```bash
-# Install ReportLab if not already installed
-pip install reportlab
-
-# Run the generator
+pip install reportlab   # if not already installed
 python generate_pdf.py
 ```
 
-Output: `ED_AI_Agent_Architecture.pdf` in the project root (~13 pages).
+Output: `ED_AI_Agent_Architecture.pdf` (~13 pages) with 8 programmatically drawn diagrams — system architecture, sequence diagrams, ER diagram, deployment diagram, API reference, MCP tools, and DB schema tables.
 
-The PDF includes 8 programmatically drawn architecture diagrams:
+### Business Case PDF
 
-- Cover page with system overview
-- 5-layer system architecture
-- Chat request sequence (7 actors)
-- Patient intake data flow
-- MCP tool chain and protocol detail
-- Component-level file dependency graph
-- Full ER diagram for all 7 tables
-- Deployment architecture
+```bash
+pip install reportlab   # if not already installed
+python generate_business_case_pdf.py
+```
+
+Output: `Adviava_ED_AI_Agent_Business_Case.pdf` with the full Adviava-branded business case covering the ED crisis problem, solution value, financial impact, strategic roadmap, and 3-sentence executive summary.
 
 ---
 
-## Project Structure
+## 14. Project Structure
 
 ```
 pntdigappproj/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py          # FastAPI routes and lifespan
-│   ├── agent.py         # LangChain agent + MCP session wiring
-│   ├── database.py      # SQLite schema + sample data seed
-│   └── models.py        # Pydantic request/response models
+│   ├── main.py                          # FastAPI routes and lifespan
+│   ├── agent.py                         # LangChain agent + MCP session wiring
+│   ├── database.py                      # SQLite schema + sample data seed
+│   └── models.py                        # Pydantic request/response models
 ├── mcp_server/
 │   ├── __init__.py
-│   └── server.py        # FastMCP server with 9 database tools
+│   └── server.py                        # FastMCP server with 9 database tools
 ├── frontend/
-│   ├── index.html       # Census dashboard
-│   ├── chat.html        # AI chat interface
-│   └── intake.html      # Patient intake form (ED-001)
+│   ├── index.html                       # Census dashboard
+│   ├── chat.html                        # AI chat interface
+│   ├── intake.html                      # Patient intake form (ED-001)
+│   └── business_case.html              # Business case & value analysis
 ├── data/
-│   └── ed_database.db   # SQLite DB (auto-created, git-ignored)
-├── generate_pdf.py      # ReportLab architecture PDF generator
-├── ED_AI_Agent_Architecture.pdf
+│   └── ed_database.db                   # SQLite DB (auto-created, git-ignored)
+├── generate_pdf.py                      # ReportLab technical architecture PDF
+├── generate_business_case_pdf.py        # ReportLab business case PDF
+├── ED_AI_Agent_Architecture.pdf         # Pre-generated technical architecture PDF
+├── Adviava_ED_AI_Agent_Business_Case.pdf # Pre-generated business case PDF
+├── BUSINESS_CASE.md                     # Business case source (markdown)
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
-├── start.bat            # Windows one-click startup
-└── start.sh             # macOS/Linux one-click startup
+├── start.bat                            # Windows one-click startup
+└── start.sh                             # macOS/Linux one-click startup
 ```
 
 ---
 
-## Troubleshooting
+## 15. Troubleshooting
 
-**`503 AI agent unavailable`** — `ANTHROPIC_API_KEY` is missing or still set to the placeholder in `.env`. Open `.env` and add your real key.
+**`503 AI agent unavailable`** — `ANTHROPIC_API_KEY` is missing or still set to the placeholder in `.env`. Open `.env` and add your real key, then restart the server.
 
 **`Address already in use`** on port 8000 — Another process is using the port. Either stop it or change `PORT=9000` in `.env`.
 
@@ -743,3 +828,7 @@ pntdigappproj/
 **Intake form shows error toast** — Check the terminal for the Python traceback. Most commonly a missing required field or a duplicate MRN.
 
 **Agent response is slow (5–10s)** — Normal. The MCP subprocess starts fresh per request (adds ~2–3s) and each LLM call adds latency. The agent may also make multiple tool calls before answering.
+
+**Business Case PDF download fails** — The PDF must be in the `frontend/` directory for the static file server to serve it, or accessed via `/docs` endpoint. Regenerate it with `python generate_business_case_pdf.py` and place the output in `frontend/` if needed.
+
+**EC2: changes not reflected after a push** — SSH into the instance, run `git pull origin main` in `~/pntdigappproj`, then `sudo systemctl restart edaiagent`.

@@ -1,5 +1,5 @@
 # Business Case: ED AI Agent — Clinical Decision Support System
-### Mercy Regional Medical Center Emergency Department
+### Adviava Regional Medical Center Emergency Department
 ---
 
 ## Executive Summary
@@ -224,5 +224,5 @@ Emergency Departments are drowning in fragmented data, under-resourced staff, an
 
 ---
 
-*Document prepared for: Mercy Regional Medical Center — ED Operations and Digital Health Leadership*
+*Document prepared for: Adviava Regional Medical Center — ED Operations and Digital Health Leadership*
 *Technology: FastAPI · LangChain · Claude Sonnet 4.6 · Model Context Protocol (MCP) · SQLite/FHIR*

@@ -1,10 +1,9 @@
 import asyncio
 import json
 import os
-import sys
+import sqlite3
 from typing import Any
 
-import mysql.connector
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -12,31 +11,31 @@ from mcp import types
 
 load_dotenv()
 
-
-def get_connection():
-    return mysql.connector.connect(
-        host=os.getenv("MYSQL_HOST", "localhost"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", ""),
-        database=os.getenv("MYSQL_DATABASE", ""),
-    )
+_DB_PATH = os.getenv(
+    "DB_PATH",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "ed_database.db"),
+)
 
 
-app = Server("mysql-mcp-server")
+def get_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
+    return [dict(r) for r in rows]
+
+
+app = Server("sqlite-mcp-server")
 
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
-            name="list_databases",
-            description="List all databases available on the MySQL server",
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        types.Tool(
             name="list_tables",
-            description="List all tables in the currently selected MySQL database",
+            description="List all tables in the SQLite database",
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         types.Tool(
@@ -56,8 +55,8 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="execute_query",
             description=(
-                "Execute a read-only SELECT SQL query against the MySQL database "
-                "and return the results as JSON. Only SELECT statements are permitted."
+                "Execute a read-only SELECT SQL query against the SQLite database "
+                "and return results as JSON. Only SELECT statements are permitted."
             ),
             inputSchema={
                 "type": "object",
@@ -72,14 +71,14 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_table_sample",
-            description="Fetch a sample of rows from a table (default 10 rows)",
+            description="Fetch a sample of rows from a table (default 10, max 100)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "table_name": {"type": "string", "description": "Name of the table"},
                     "limit": {
                         "type": "integer",
-                        "description": "Number of rows to return (default 10, max 100)",
+                        "description": "Number of rows to return",
                         "default": 10,
                     },
                 },
@@ -88,7 +87,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_table_stats",
-            description="Return basic statistics (min, max, avg, count) for numeric columns in a table",
+            description="Return min/max/avg/count statistics for numeric columns in a table",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -102,30 +101,22 @@ async def list_tools() -> list[types.Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-    conn = None
     try:
         conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
+        cur = conn.cursor()
 
-        if name == "list_databases":
-            cursor.execute("SHOW DATABASES")
-            rows = cursor.fetchall()
-            databases = [row["Database"] for row in rows]
-            return [types.TextContent(type="text", text=json.dumps(databases, indent=2))]
-
-        elif name == "list_tables":
-            cursor.execute("SHOW TABLES")
-            rows = cursor.fetchall()
-            tables = [list(row.values())[0] for row in rows]
+        if name == "list_tables":
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = [row["name"] for row in cur.fetchall()]
             return [types.TextContent(type="text", text=json.dumps(tables, indent=2))]
 
         elif name == "describe_table":
             table = arguments["table_name"]
-            cursor.execute(f"DESCRIBE `{table}`")
-            columns = cursor.fetchall()
-            cursor.execute(f"SELECT COUNT(*) AS row_count FROM `{table}`")
-            count = cursor.fetchone()
-            result = {"table": table, "columns": columns, "row_count": count["row_count"]}
+            cur.execute(f"PRAGMA table_info(\"{table}\")")
+            columns = rows_to_dicts(cur.fetchall())
+            cur.execute(f"SELECT COUNT(*) AS row_count FROM \"{table}\"")
+            count = dict(cur.fetchone())["row_count"]
+            result = {"table": table, "columns": columns, "row_count": count}
             return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 
         elif name == "execute_query":
@@ -138,54 +129,42 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                         text="Error: Only SELECT queries are permitted for safety.",
                     )
                 ]
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            return [
-                types.TextContent(
-                    type="text", text=json.dumps(rows, indent=2, default=str)
-                )
-            ]
+            cur.execute(query)
+            rows = rows_to_dicts(cur.fetchall())
+            return [types.TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
 
         elif name == "get_table_sample":
             table = arguments["table_name"]
             limit = min(int(arguments.get("limit", 10)), 100)
-            cursor.execute(f"SELECT * FROM `{table}` LIMIT {limit}")
-            rows = cursor.fetchall()
-            return [
-                types.TextContent(
-                    type="text", text=json.dumps(rows, indent=2, default=str)
-                )
-            ]
+            cur.execute(f"SELECT * FROM \"{table}\" LIMIT {limit}")
+            rows = rows_to_dicts(cur.fetchall())
+            return [types.TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
 
         elif name == "get_table_stats":
             table = arguments["table_name"]
-            cursor.execute(f"DESCRIBE `{table}`")
-            columns = cursor.fetchall()
-            numeric_types = {"int", "bigint", "smallint", "tinyint", "float", "double", "decimal"}
+            cur.execute(f"PRAGMA table_info(\"{table}\")")
+            columns = rows_to_dicts(cur.fetchall())
+            numeric_affinity = {"integer", "real", "numeric"}
             numeric_cols = [
-                col["Field"]
+                col["name"]
                 for col in columns
-                if any(t in col["Type"].lower() for t in numeric_types)
+                if any(t in col["type"].lower() for t in numeric_affinity)
             ]
             if not numeric_cols:
                 return [
                     types.TextContent(
                         type="text",
-                        text=f"No numeric columns found in table `{table}`.",
+                        text=f"No numeric columns found in table \"{table}\".",
                     )
                 ]
             stats_exprs = ", ".join(
-                f"MIN(`{c}`) AS `{c}_min`, MAX(`{c}`) AS `{c}_max`, "
-                f"AVG(`{c}`) AS `{c}_avg`, COUNT(`{c}`) AS `{c}_count`"
+                f'MIN("{c}") AS "{c}_min", MAX("{c}") AS "{c}_max", '
+                f'AVG("{c}") AS "{c}_avg", COUNT("{c}") AS "{c}_count"'
                 for c in numeric_cols
             )
-            cursor.execute(f"SELECT {stats_exprs} FROM `{table}`")
-            row = cursor.fetchone()
-            return [
-                types.TextContent(
-                    type="text", text=json.dumps(row, indent=2, default=str)
-                )
-            ]
+            cur.execute(f'SELECT {stats_exprs} FROM "{table}"')
+            row = dict(cur.fetchone())
+            return [types.TextContent(type="text", text=json.dumps(row, indent=2, default=str))]
 
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -193,9 +172,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     except Exception as exc:
         return [types.TextContent(type="text", text=f"Error: {exc}")]
     finally:
-        if conn and conn.is_connected():
-            cursor.close()
-            conn.close()
+        conn.close()
 
 
 async def main():

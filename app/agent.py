@@ -12,8 +12,7 @@ load_dotenv()
 
 _MCP_SERVER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mcp_server", "server.py")
 
-SYSTEM_PROMPT = """You are a helpful MySQL database assistant. You have access to tools that let \
-you explore and query a MySQL database.
+SYSTEM_PROMPT = """You are a helpful database assistant with access to a SQLite database (ed_database.db).
 
 When answering questions:
 1. First explore the schema (list_tables, describe_table) if you need to understand the structure.
@@ -32,7 +31,7 @@ Rules:
 @asynccontextmanager
 async def agent_session():
     python = sys.executable
-    async with MultiServerMCPClient(
+    client = MultiServerMCPClient(
         {
             "mysql": {
                 "command": python,
@@ -40,16 +39,16 @@ async def agent_session():
                 "transport": "stdio",
             }
         }
-    ) as client:
-        tools = client.get_tools()
-        model = ChatAnthropic(
-            model="claude-sonnet-4-6",
-            temperature=0,
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        )
-        agent = create_react_agent(
-            model,
-            tools,
-            state_modifier=SystemMessage(content=SYSTEM_PROMPT),
-        )
-        yield agent
+    )
+    tools = await client.get_tools()
+    model = ChatAnthropic(
+        model="claude-sonnet-4-6",
+        temperature=0,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+    )
+    agent = create_react_agent(
+        model,
+        tools,
+        prompt=SystemMessage(content=SYSTEM_PROMPT),
+    )
+    yield agent

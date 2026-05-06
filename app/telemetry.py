@@ -7,6 +7,18 @@ from typing import Any, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
+# Claude Sonnet 4.6 pricing (https://www.anthropic.com/pricing)
+_PRICE_INPUT_PER_TOKEN  = 3.00  / 1_000_000   # $3.00  per 1M input tokens
+_PRICE_OUTPUT_PER_TOKEN = 15.00 / 1_000_000   # $15.00 per 1M output tokens
+
+
+def calc_cost(prompt_tokens: int, completion_tokens: int) -> float:
+    return round(
+        prompt_tokens * _PRICE_INPUT_PER_TOKEN +
+        completion_tokens * _PRICE_OUTPUT_PER_TOKEN,
+        8,
+    )
+
 
 @dataclass
 class ToolCallLog:
@@ -37,11 +49,17 @@ class RequestLog:
     tool_calls: list = field(default_factory=list)
     llm_calls: list = field(default_factory=list)
     agent_steps: list = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
 
 
 # ── Global in-memory store (last 100 requests) ────────────────────────────────
 _store: deque[RequestLog] = deque(maxlen=100)
-_totals: dict[str, Any] = {"total": 0, "success": 0, "error": 0, "duration_sum": 0.0}
+_totals: dict[str, Any] = {
+    "total": 0, "success": 0, "error": 0, "duration_sum": 0.0,
+    "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0,
+}
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -61,6 +79,7 @@ def complete_request(log: RequestLog, response: str, duration_ms: float) -> None
     log.response = response
     log.duration_ms = round(duration_ms, 1)
     log.status = "success"
+    _tally_tokens(log)
     _totals["success"] += 1
     _totals["duration_sum"] += duration_ms
 
@@ -69,8 +88,18 @@ def fail_request(log: RequestLog, error: str, duration_ms: float) -> None:
     log.error = error
     log.duration_ms = round(duration_ms, 1)
     log.status = "error"
+    _tally_tokens(log)
     _totals["error"] += 1
     _totals["duration_sum"] += duration_ms
+
+
+def _tally_tokens(log: RequestLog) -> None:
+    log.prompt_tokens     = sum(lc.prompt_tokens     for lc in log.llm_calls)
+    log.completion_tokens = sum(lc.completion_tokens for lc in log.llm_calls)
+    log.cost_usd          = calc_cost(log.prompt_tokens, log.completion_tokens)
+    _totals["prompt_tokens"]     += log.prompt_tokens
+    _totals["completion_tokens"] += log.completion_tokens
+    _totals["cost_usd"]          += log.cost_usd
 
 
 def get_logs(limit: int = 50) -> list[dict]:
@@ -87,12 +116,10 @@ def get_metrics() -> dict:
         for tc in r.tool_calls:
             tool_counts[tc.name] = tool_counts.get(tc.name, 0) + 1
 
-    recent = [
-        {"id": r.id, "duration_ms": r.duration_ms, "status": r.status,
-         "timestamp": r.timestamp}
-        for r in list(_store)[-20:]
-        if r.status != "in_progress"
-    ]
+    completed = [r for r in list(_store) if r.status != "in_progress"]
+    recent = completed[-20:]
+
+    avg_cost = _totals["cost_usd"] / max(len(completed), 1)
 
     return {
         "total_requests": _totals["total"],
@@ -102,7 +129,32 @@ def get_metrics() -> dict:
         "success_rate": round(_totals["success"] / max(_totals["total"], 1) * 100, 1),
         "avg_duration_ms": round(avg_ms, 1),
         "tool_call_counts": tool_counts,
-        "recent_latencies": recent,
+        "recent_latencies": [
+            {"id": r.id, "duration_ms": r.duration_ms, "status": r.status,
+             "timestamp": r.timestamp}
+            for r in recent
+        ],
+        # Token & cost aggregates
+        "total_prompt_tokens":     _totals["prompt_tokens"],
+        "total_completion_tokens": _totals["completion_tokens"],
+        "total_tokens":            _totals["prompt_tokens"] + _totals["completion_tokens"],
+        "total_cost_usd":          round(_totals["cost_usd"], 6),
+        "avg_cost_usd":            round(avg_cost, 6),
+        "model":                   "claude-sonnet-4-6",
+        "price_input_per_1m":      3.00,
+        "price_output_per_1m":     15.00,
+        "cost_per_request": [
+            {
+                "id": r.id,
+                "timestamp": r.timestamp,
+                "prompt_tokens": r.prompt_tokens,
+                "completion_tokens": r.completion_tokens,
+                "total_tokens": r.prompt_tokens + r.completion_tokens,
+                "cost_usd": r.cost_usd,
+                "status": r.status,
+            }
+            for r in recent
+        ],
     }
 
 
@@ -217,6 +269,10 @@ def _to_dict(r: RequestLog) -> dict:
         "error": r.error,
         "duration_ms": r.duration_ms,
         "status": r.status,
+        "prompt_tokens": r.prompt_tokens,
+        "completion_tokens": r.completion_tokens,
+        "total_tokens": r.prompt_tokens + r.completion_tokens,
+        "cost_usd": r.cost_usd,
         "tool_calls": [
             {
                 "name": tc.name,

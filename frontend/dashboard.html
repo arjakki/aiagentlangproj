@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Operational Dashboard — ED AI Agent</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -465,6 +466,111 @@
 
     /* Last updated */
     #lastUpdated { font-size: 0.7rem; color: var(--text-muted); }
+
+    /* ── Flow Analysis section ──────────────────────────────────────────── */
+    .flow-section {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 1000px) { .flow-section { grid-template-columns: 1fr; } }
+
+    /* Architecture stack */
+    .arch-stack { display: flex; flex-direction: column; align-items: stretch; }
+
+    .arch-node {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1.5px solid;
+    }
+    .arch-icon { font-size: 1.3rem; flex-shrink: 0; }
+    .arch-node-label { font-size: 0.82rem; font-weight: 700; }
+    .arch-node-sub   { font-size: 0.65rem; color: var(--text-muted); margin-top: 1px; }
+
+    .arch-node.browser { border-color: #93c5fd; background: #eff6ff; }
+    .arch-node.fastapi { border-color: #86efac; background: #f0fdf4; }
+    .arch-node.agent   { border-color: #c4b5fd; background: #faf5ff; }
+    .arch-node.mcp     { border-color: #fcd34d; background: #fffbeb; }
+    .arch-node.db      { border-color: #fb923c; background: #fff7ed; }
+
+    .arch-connector {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 2px 20px;
+    }
+    .arch-line {
+      width: 2px;
+      height: 24px;
+      background: linear-gradient(to bottom, #cbd5e1, #94a3b8);
+      position: relative;
+      flex-shrink: 0;
+      margin-left: 18px;
+    }
+    .arch-line::after {
+      content: '';
+      position: absolute;
+      bottom: -5px;
+      left: -4px;
+      border: 5px solid transparent;
+      border-top-color: #94a3b8;
+    }
+    .arch-proto-tag {
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      padding: 2px 10px;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    /* Protocol time breakdown */
+    .proto-bar-section { margin-top: 18px; }
+    .proto-bar-title {
+      font-size: 0.68rem; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+    }
+    .proto-bar-item { margin-bottom: 9px; }
+    .proto-bar-label { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.72rem; }
+    .proto-bar-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .proto-bar-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .proto-bar-val { color: var(--text-muted); font-family: monospace; font-size: 0.7rem; }
+    .proto-bar-track { height: 8px; background: #f1f5f9; border-radius: 4px; overflow: hidden; }
+    .proto-bar-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+    .proto-bar-fill.llm      { background: var(--accent); }
+    .proto-bar-fill.mcp      { background: var(--purple); }
+    .proto-bar-fill.overhead { background: #94a3b8; }
+
+    /* Sequence diagram panel */
+    .req-selector { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+    .req-selector label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+    .req-selector select {
+      flex: 1; font-size: 0.78rem; border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 8px; color: var(--text);
+      background: #fff; cursor: pointer;
+    }
+    .req-selector select:focus { outline: none; border-color: var(--accent); }
+
+    #mermaid-wrap {
+      overflow: auto;
+      min-height: 220px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fafbfc;
+      padding: 12px;
+    }
+    #mermaid-wrap svg { max-width: 100%; height: auto; }
+    .mermaid-empty { color: var(--text-muted); font-size: 0.8rem; font-style: italic; align-self: center; text-align: center; }
   </style>
 </head>
 <body>
@@ -545,6 +651,79 @@
         <canvas id="toolChart"></canvas>
       </div>
     </div>
+  </div>
+
+  <!-- ── Request Flow Analysis ── -->
+  <div class="flow-section">
+
+    <!-- Left: static architecture + protocol breakdown -->
+    <div class="card">
+      <div class="card-title">System Architecture &amp; Protocols</div>
+
+      <div class="arch-stack">
+        <div class="arch-node browser">
+          <span class="arch-icon">🌐</span>
+          <div><div class="arch-node-label">Browser</div><div class="arch-node-sub">Chat UI — HTML / CSS / JS</div></div>
+        </div>
+        <div class="arch-connector">
+          <div class="arch-line"></div>
+          <span class="arch-proto-tag">HTTP / REST &nbsp;·&nbsp; POST /api/chat</span>
+        </div>
+        <div class="arch-node fastapi">
+          <span class="arch-icon">⚡</span>
+          <div><div class="arch-node-label">FastAPI</div><div class="arch-node-sub">Async web server &nbsp;·&nbsp; :9000</div></div>
+        </div>
+        <div class="arch-connector">
+          <div class="arch-line"></div>
+          <span class="arch-proto-tag">Python &nbsp;·&nbsp; async ainvoke()</span>
+        </div>
+        <div class="arch-node agent">
+          <span class="arch-icon">🤖</span>
+          <div><div class="arch-node-label">LangChain ReAct Agent</div><div class="arch-node-sub">LangGraph &nbsp;·&nbsp; Claude Sonnet 4.6 &nbsp;·&nbsp; HTTPS/Anthropic</div></div>
+        </div>
+        <div class="arch-connector">
+          <div class="arch-line"></div>
+          <span class="arch-proto-tag">stdio &nbsp;·&nbsp; MCP protocol</span>
+        </div>
+        <div class="arch-node mcp">
+          <span class="arch-icon">🔧</span>
+          <div><div class="arch-node-label">MCP Server</div><div class="arch-node-sub">6 SQL tools &nbsp;·&nbsp; subprocess (stdio)</div></div>
+        </div>
+        <div class="arch-connector">
+          <div class="arch-line"></div>
+          <span class="arch-proto-tag">SQL &nbsp;·&nbsp; sqlite3 (Python stdlib)</span>
+        </div>
+        <div class="arch-node db">
+          <span class="arch-icon">🗄️</span>
+          <div><div class="arch-node-label">SQLite Database</div><div class="arch-node-sub">ed_database.db &nbsp;·&nbsp; local file</div></div>
+        </div>
+      </div>
+
+      <!-- Protocol time breakdown for selected request -->
+      <div class="proto-bar-section">
+        <div class="proto-bar-title">Protocol Time Breakdown</div>
+        <div id="protoBars" style="color:var(--text-muted);font-size:.75rem;font-style:italic;padding:4px 0">
+          Select a request on the right to see time breakdown.
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: dynamic Mermaid sequence diagram -->
+    <div class="card">
+      <div class="card-title">Request Sequence Diagram</div>
+
+      <div class="req-selector">
+        <label>Request:</label>
+        <select id="reqSelect" onchange="onReqSelect()">
+          <option value="">— select a request —</option>
+        </select>
+      </div>
+
+      <div id="mermaid-wrap">
+        <div class="mermaid-empty">Send a chat message, then select a request above.</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- ── Request log ── -->
@@ -812,12 +991,161 @@ async function refresh() {
     updateMetrics(metrics);
     updateCharts(metrics);
     renderTable(logs);
+    updateReqSelector(logs);
 
     document.getElementById('lastUpdated').textContent =
       'Updated ' + new Date().toLocaleTimeString();
   } catch (err) {
     console.error('Dashboard refresh error:', err);
   }
+}
+
+// ── Mermaid init ─────────────────────────────────────────────────────────
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    primaryColor: '#eff6ff',
+    primaryBorderColor: '#5b8dee',
+    primaryTextColor: '#1e293b',
+    secondaryColor: '#faf5ff',
+    tertiaryColor: '#f0fdf4',
+    fontSize: '13px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  sequence: { mirrorActors: false, useMaxWidth: true, messageMargin: 30, actorMargin: 50 },
+});
+
+let selectedReqId = null;
+
+// ── Request selector ──────────────────────────────────────────────────────
+function updateReqSelector(logsData) {
+  const sel = document.getElementById('reqSelect');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— select a request —</option>';
+  logsData.forEach(r => {
+    const ts = new Date(r.timestamp * 1000).toLocaleTimeString();
+    const icon = r.status === 'success' ? '✓' : r.status === 'error' ? '✗' : '…';
+    const opt = document.createElement('option');
+    opt.value = r.id;
+    opt.textContent = `#${r.id}  ${ts}  ${icon}  ${r.user_message.slice(0, 42)}`;
+    sel.appendChild(opt);
+  });
+  // Auto-select latest completed on first load
+  if (!selectedReqId && logsData.length) {
+    const first = logsData.find(r => r.status !== 'in_progress') || logsData[0];
+    selectedReqId = first.id;
+  }
+  sel.value = prev || selectedReqId || '';
+  if (sel.value) renderFlowForRequest(sel.value, logsData);
+}
+
+function onReqSelect() {
+  selectedReqId = document.getElementById('reqSelect').value;
+  renderFlowForRequest(selectedReqId, logs);
+}
+
+// ── Render flow panels for one request ────────────────────────────────────
+function renderFlowForRequest(reqId, logsData) {
+  if (!reqId) return;
+  const r = logsData.find(x => x.id === reqId);
+  if (!r) return;
+  renderProtoBars(r);
+  renderSequenceDiagram(r);
+}
+
+// ── Protocol time bars ────────────────────────────────────────────────────
+function renderProtoBars(r) {
+  const total  = r.duration_ms || 0;
+  const llmMs  = r.llm_calls.reduce((s, l) => s + l.duration_ms, 0);
+  const mcpMs  = r.tool_calls.reduce((s, t) => s + t.duration_ms, 0);
+  const overMs = Math.max(0, total - llmMs - mcpMs);
+  const pct    = v => total > 0 ? Math.min(100, Math.round(v / total * 100)) : 0;
+
+  const bars = [
+    { label: 'Claude LLM  (HTTPS / Anthropic)', cls: 'llm',      dot: '#5b8dee', ms: llmMs,  p: pct(llmMs)  },
+    { label: 'MCP Tool Calls  (stdio)',          cls: 'mcp',      dot: '#8b5cf6', ms: mcpMs,  p: pct(mcpMs)  },
+    { label: 'FastAPI + LangGraph overhead',     cls: 'overhead', dot: '#94a3b8', ms: overMs, p: pct(overMs) },
+  ];
+
+  document.getElementById('protoBars').innerHTML =
+    bars.map(b => `
+      <div class="proto-bar-item">
+        <div class="proto-bar-label">
+          <span class="proto-bar-name">
+            <span class="proto-bar-dot" style="background:${b.dot}"></span>${b.label}
+          </span>
+          <span class="proto-bar-val">${b.ms.toLocaleString()} ms &nbsp;(${b.p}%)</span>
+        </div>
+        <div class="proto-bar-track">
+          <div class="proto-bar-fill ${b.cls}" style="width:${b.p}%"></div>
+        </div>
+      </div>`).join('') +
+    `<div style="font-size:.68rem;color:var(--text-muted);margin-top:10px;padding-top:8px;border-top:1px solid #f1f5f9">
+       Total end-to-end: <strong>${total.toLocaleString()} ms</strong> &nbsp;·&nbsp;
+       ${r.llm_calls.length} LLM call${r.llm_calls.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
+       ${r.tool_calls.length} MCP tool call${r.tool_calls.length !== 1 ? 's' : ''}
+     </div>`;
+}
+
+// ── Mermaid sequence diagram ──────────────────────────────────────────────
+async function renderSequenceDiagram(r) {
+  const wrap = document.getElementById('mermaid-wrap');
+  wrap.innerHTML = '<div class="mermaid-empty" style="align-self:center">Rendering…</div>';
+
+  const definition = buildMermaidDef(r);
+  try {
+    const uid = 'seq' + Date.now();
+    const { svg } = await mermaid.render(uid, definition);
+    wrap.innerHTML = svg;
+  } catch (err) {
+    wrap.innerHTML =
+      `<pre style="font-size:.68rem;color:#ef4444;white-space:pre-wrap;width:100%">${esc(definition)}\n\n// Render error: ${esc(String(err.message))}</pre>`;
+  }
+}
+
+function buildMermaidDef(r) {
+  const lines = [
+    'sequenceDiagram',
+    '  actor U as Browser',
+    '  participant F as FastAPI',
+    '  participant A as LangChain Agent',
+    '  participant M as MCP Server',
+    '  participant D as SQLite',
+    '',
+    '  U->>+F: POST /api/chat  [HTTP/REST]',
+    '  F->>+A: agent.ainvoke()  [Python]',
+  ];
+
+  let llmIdx = 0;
+  for (const step of (r.agent_steps || [])) {
+    if (step.type === 'llm_call') {
+      llmIdx++;
+      const tok = (step.prompt_tokens != null)
+        ? ` ${step.prompt_tokens}↑ ${step.completion_tokens}↓ tokens`
+        : '';
+      lines.push(`  Note over A,F: LLM call ${llmIdx} —${tok} — ${step.duration_ms || 0}ms  [HTTPS/Anthropic]`);
+    } else if (step.type === 'tool_call') {
+      const inp = sanitizeMermaid((step.input || '').slice(0, 30));
+      lines.push(`  A->>+M: ${step.tool}(${inp})  [stdio/MCP]`);
+      lines.push(`  M->>D: SQL query  [sqlite3]`);
+      lines.push(`  D-->>M: rows`);
+      lines.push(`  M-->>-A: result — ${step.duration_ms || 0}ms`);
+    } else if (step.type === 'tool_error') {
+      const name = step.tool || 'tool';
+      lines.push(`  A->>+M: ${name}()  [stdio/MCP]`);
+      lines.push(`  M-->>-A: error`);
+    }
+  }
+
+  const httpStatus = r.status === 'error' ? 'HTTP 500' : 'HTTP 200';
+  lines.push(`  A-->>-F: final response  [Python]`);
+  lines.push(`  F-->>-U: ${httpStatus} JSON — ${r.duration_ms}ms total  [HTTP/REST]`);
+  return lines.join('\n');
+}
+
+function sanitizeMermaid(str) {
+  return str.replace(/["\n\r{}]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
